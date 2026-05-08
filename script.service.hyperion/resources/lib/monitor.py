@@ -94,7 +94,9 @@ class HyperionMonitor(xbmc.Monitor):
         try:
             self.connect()
             return self.connected_state
-        except Exception:
+        except Exception as e:
+            # FIX: Log error details instead of swallowing the exception silently.
+            self._logger.error(f"Connection to Hyperion failed: {e}")
             self.notify_error(32100)
             return self.error_state
 
@@ -144,15 +146,19 @@ class HyperionMonitor(xbmc.Monitor):
         image = Image.frombytes("RGB", capture_size, bytes(cap_image), "raw", "BGRX")
 
         try:
-            # send image to hyperion
+            # FIX: Increase duration to 3x sleep_time (instead of 1x) so a single
+            # slow capture cycle does not cause Hyperion to mark the source as
+            # inactive.
             self._hyperion.send_image(
                 image.width,
                 image.height,
                 image.tobytes(),
                 self.settings.priority,
-                self.settings.sleep_time,
+                self.settings.sleep_time * 3,
             )
-        except Exception:
+        except Exception as e:
+            # FIX: Log error details instead of swallowing the exception silently.
+            self._logger.error(f"Failed to send image to Hyperion: {e}")
             # unable to send image. notify and go to the error state
             self.output_handler.notify_label(32101)
             return self.error_state

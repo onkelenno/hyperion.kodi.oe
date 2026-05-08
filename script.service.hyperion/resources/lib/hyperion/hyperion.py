@@ -122,6 +122,18 @@ class Hyperion:
         request.command = HyperionRequest.CLEARALL
         self._send_message(request)
 
+    # FIX: _recv_exactly replaces direct recv() calls, which could fail when TCP
+    # returns only part of the reply payload.
+    def _recv_exactly(self, n: int) -> bytes:
+        """Receive exactly n bytes, looping until all data has arrived."""
+        data = b""
+        while len(data) < n:
+            chunk = self._socket.recv(n - len(data))
+            if not chunk:
+                raise RuntimeError("Connection closed by Hyperion server")
+            data += chunk
+        return data
+
     def _send_message(self, message: Any) -> None:
         """
         Send the given proto message to Hyperion.
@@ -136,10 +148,10 @@ class Hyperion:
         self._socket.sendall(binary_size)
         self._socket.sendall(binary_request)
 
-        # receive a reply from Hyperion
-        size = struct.unpack(">I", self._socket.recv(4))[0]
+        # receive a reply from Hyperion (use _recv_exactly to handle partial TCP reads)
+        size = struct.unpack(">I", self._recv_exactly(4))[0]
         reply = HyperionReply()
-        reply.ParseFromString(self._socket.recv(size))
+        reply.ParseFromString(self._recv_exactly(size))
 
         # check the reply
         if not reply.success:
