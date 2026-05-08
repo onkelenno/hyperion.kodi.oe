@@ -29,7 +29,7 @@ from resources.lib.logger import Logger
 from resources.lib.monitor import HyperionMonitor
 from resources.lib.settings import SettingsManager
 
-ADDON_NAME = "script.service.hyperion"
+ADDON_NAME = "script.service.hyperion.oe"
 
 
 def main() -> None:
