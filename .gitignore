@@ -12,3 +12,6 @@ __pycache__
 Pipfile.lock
 .mypy_cache
 .ruff_cache
+
+# addon zips
+script.service.hyperion.oe/*.zip

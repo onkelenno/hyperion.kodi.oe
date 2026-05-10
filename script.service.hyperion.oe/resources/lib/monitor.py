@@ -54,6 +54,7 @@ class HyperionMonitor(xbmc.Monitor):
         self.show_error_message = True
         self._hyperion: Hyperion
         self._capture: xbmc.RenderCapture
+        self._capture_pending = False
 
     def onSettingsChanged(self) -> None:
         self.settings.read_settings()
@@ -89,7 +90,10 @@ class HyperionMonitor(xbmc.Monitor):
 
     def disconnected_state(self) -> State:
         if not self.grabbing:
-            xbmc.sleep(500)
+            # FIX: Avoid a fixed 500 ms polling interval while disconnected.
+            # If grabbing toggles briefly, a half-second reconnect delay can show
+            # up as regular flicker.
+            xbmc.sleep(max(1, min(100, self.settings.sleep_time)))
             return self.disconnected_state
         try:
             self.connect()
@@ -116,6 +120,18 @@ class HyperionMonitor(xbmc.Monitor):
         )
         self._hyperion = Hyperion(settings.address, settings.port)
         self._capture = xbmc.RenderCapture()
+        self._capture_pending = False
+
+    def disconnect(self) -> None:
+        try:
+            # FIX: Explicitly clear the priority when grabbing stops so the last
+            # frame does not remain active after playback or capture ends.
+            self._hyperion.clear(self.settings.priority)
+        except Exception as e:
+            self._logger.error(f"Failed to clear Hyperion priority: {e}")
+        finally:
+            self._capture_pending = False
+            del self._hyperion
 
     def get_capture_size(self) -> Tuple[Tuple[int, int], int]:
         width = self.settings.capture_width
@@ -127,11 +143,16 @@ class HyperionMonitor(xbmc.Monitor):
 
     def connected_state(self) -> State:
         if not self.grabbing:
-            del self._hyperion
+            self.disconnect()
             return self.disconnected_state
 
         capture_size, expected_capture_size = self.get_capture_size()
-        self._capture.capture(*capture_size)
+        if not self._capture_pending:
+            # FIX: Keep one capture request in flight until it completes.
+            # Restarting RenderCapture on every loop can starve image delivery and
+            # collapse the effective update rate.
+            self._capture.capture(*capture_size)
+            self._capture_pending = True
         cap_image = self._capture.getImage(self.settings.sleep_time)
         if cap_image is None or len(cap_image) < expected_capture_size:
             self._logger.debug(
@@ -139,16 +160,18 @@ class HyperionMonitor(xbmc.Monitor):
                 f"captured: {len(cap_image) if cap_image is not None else 'None'}, "
                 f"expected: {expected_capture_size}"
             )
-            xbmc.sleep(250)
+            # FIX: Use a frame-based retry delay instead of a fixed 250 ms pause.
+            # At higher FPS, 250 ms can exceed the image duration and cause flicker.
+            xbmc.sleep(max(1, self.settings.sleep_time))
             return self.connected_state
 
         # v17+ use BGRA format, converting to RGB
+        self._capture_pending = False
         image = Image.frombytes("RGB", capture_size, bytes(cap_image), "raw", "BGRX")
 
         try:
-            # FIX: Increase duration to 3x sleep_time (instead of 1x) so a single
-            # slow capture cycle does not cause Hyperion to mark the source as
-            # inactive.
+            # FIX: Keep each image valid for 3x sleep_time so a brief capture or
+            # send delay does not cause Hyperion to mark the source as inactive.
             self._hyperion.send_image(
                 image.width,
                 image.height,
